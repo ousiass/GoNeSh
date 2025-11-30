@@ -1,21 +1,40 @@
-// Package clipboard provides clipboard operations for GoNeSh.
+// Package clipboard provides internal clipboard for GoNeSh.
+// This clipboard is internal to GoNeSh and works consistently
+// regardless of local or SSH environment.
 package clipboard
 
-import (
-	"github.com/atotto/clipboard"
+import "sync"
+
+var (
+	buffer string
+	mu     sync.RWMutex
 )
 
-// Copy copies text to the system clipboard
+// Copy copies text to the internal clipboard
 func Copy(text string) error {
-	return clipboard.WriteAll(text)
+	mu.Lock()
+	defer mu.Unlock()
+	buffer = text
+	return nil
 }
 
-// Paste returns text from the system clipboard
+// Paste returns text from the internal clipboard
 func Paste() (string, error) {
-	return clipboard.ReadAll()
+	mu.RLock()
+	defer mu.RUnlock()
+	return buffer, nil
 }
 
-// IsSupported returns whether clipboard operations are supported
-func IsSupported() bool {
-	return !clipboard.Unsupported
+// Clear clears the internal clipboard
+func Clear() {
+	mu.Lock()
+	defer mu.Unlock()
+	buffer = ""
+}
+
+// IsEmpty returns whether the clipboard is empty
+func IsEmpty() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return buffer == ""
 }
