@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ousiass/GoNeSh/internal/history"
 	"github.com/ousiass/GoNeSh/internal/ui/context"
 	"github.com/ousiass/GoNeSh/internal/ui/organisms"
 	"github.com/ousiass/GoNeSh/pkg/config"
@@ -24,8 +25,12 @@ type App struct {
 	showHelp  bool
 
 	// Terminal sessions per tab
-	terminals    map[int]*organisms.Terminal
+	terminals         map[int]*organisms.Terminal
 	terminalIDCounter int
+
+	// Command history
+	history       *history.History
+	historySearch *organisms.HistorySearch
 }
 
 // NewApp creates a new application instance
@@ -42,16 +47,22 @@ func NewApp(cfg *config.Config) *App {
 	h.Styles.FullDesc = lipgloss.NewStyle().Foreground(ui.Theme.Text)
 	h.Styles.FullSeparator = lipgloss.NewStyle().Foreground(ui.Theme.BorderAlt)
 
+	// Initialize history
+	hist := history.New(history.DefaultMaxEntries)
+	_ = hist.Load() // Load existing history
+
 	app := &App{
-		config:    cfg,
-		ui:        ui,
-		keys:      DefaultKeyMap(),
-		help:      h,
-		tabBar:    organisms.NewTabBar(ui),
-		statusBar: organisms.NewStatusBar(ui),
-		helpModal: organisms.NewHelpModal(ui),
-		terminals: make(map[int]*organisms.Terminal),
+		config:            cfg,
+		ui:                ui,
+		keys:              DefaultKeyMap(),
+		help:              h,
+		tabBar:            organisms.NewTabBar(ui),
+		statusBar:         organisms.NewStatusBar(ui),
+		helpModal:         organisms.NewHelpModal(ui),
+		terminals:         make(map[int]*organisms.Terminal),
 		terminalIDCounter: 0,
+		history:           hist,
+		historySearch:     organisms.NewHistorySearch(ui, hist),
 	}
 
 	// Create initial terminal for the first tab
@@ -78,6 +89,27 @@ func (a *App) Init() tea.Cmd {
 // Update handles messages and updates the application state
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// Handle history search result
+	if result, ok := msg.(organisms.HistorySearchResult); ok {
+		if result.Selected && result.Entry != "" {
+			// Send selected history entry to terminal
+			if term := a.activeTerminal(); term != nil {
+				term.SendInput(result.Entry)
+			}
+		}
+		return a, nil
+	}
+
+	// If history search is visible, forward messages to it
+	if a.historySearch.IsVisible() {
+		var cmd tea.Cmd
+		a.historySearch, cmd = a.historySearch.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return a, tea.Batch(cmds...)
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -112,8 +144,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 通常時 - Alt キーのショートカット
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
+			// Save history before quitting
+			_ = a.history.Save()
 			a.closeAllTerminals()
 			return a, tea.Quit
+		case "ctrl+r":
+			// Show history search
+			a.historySearch.SetSize(a.width, a.calculateContentHeight())
+			a.historySearch.Show()
+			return a, nil
 		case "?":
 			a.showHelp = true
 			return a, nil
@@ -162,6 +201,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, term := range a.terminals {
 			term.SetSize(msg.Width, contentHeight)
 		}
+		a.historySearch.SetSize(msg.Width, contentHeight)
 
 	default:
 		// Forward other messages to active terminal
@@ -203,7 +243,18 @@ func (a *App) View() string {
 
 	// コンテンツ
 	var content string
-	if a.showHelp {
+	if a.historySearch.IsVisible() {
+		// Show history search overlay on top of terminal
+		if term := a.activeTerminal(); term != nil {
+			term.SetSize(a.width, contentHeight)
+			termView := term.View()
+			searchView := a.historySearch.View()
+			// Overlay search on terminal
+			content = a.overlayViews(termView, searchView, a.width, contentHeight)
+		} else {
+			content = a.historySearch.View()
+		}
+	} else if a.showHelp {
 		a.helpModal.SetSize(a.width, contentHeight)
 		content = a.helpModal.View()
 	} else if term := a.activeTerminal(); term != nil {
@@ -231,6 +282,12 @@ func (a *App) View() string {
 		contentStyled,
 		statusBar,
 	)
+}
+
+// overlayViews overlays the search view on top of the terminal view
+func (a *App) overlayViews(base, overlay string, width, height int) string {
+	// Simple overlay - show search box at top
+	return lipgloss.JoinVertical(lipgloss.Left, overlay)
 }
 
 // activeTerminal returns the terminal for the active tab
@@ -265,6 +322,8 @@ func (a *App) closeCurrentTab() bool {
 	}
 
 	if a.tabBar.CloseTab() {
+		// Save history before quitting
+		_ = a.history.Save()
 		return true // Should quit
 	}
 
@@ -296,4 +355,9 @@ func (a *App) calculateContentHeight() int {
 		contentHeight = 1
 	}
 	return contentHeight
+}
+
+// AddToHistory adds a command to the history
+func (a *App) AddToHistory(cmd string) {
+	a.history.Add(cmd)
 }
