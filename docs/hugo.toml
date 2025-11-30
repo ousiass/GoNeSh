@@ -1,6 +1,6 @@
 baseURL = "/"
 languageCode = "ja"
-title = "AI-Liver"
+title = "GoNeSh"
 
 # Hextra テーマの設定
 [module]
@@ -8,7 +8,7 @@ title = "AI-Liver"
     path = "github.com/imfing/hextra"
 
 [params]
-  description = "TikTok Live配信中のコメントをリアルタイムで取得し、VTuberキャラクター（VRMモデル）がAI応答を生成して音声で読み上げるブラウザベースのライブ配信アプリケーション"
+  description = "AI時代に特化したエンジニア向け次世代シェル環境 - Prompt is the Desktop"
 
   [params.navbar]
     displayTitle = true
@@ -37,7 +37,7 @@ title = "AI-Liver"
 
   [[menu.main]]
     name = "GitHub"
-    url = "https://github.com/ousiassllc/ai-liver"
+    url = "https://github.com/ousiassllc/gonesh"
     weight = 2
 
 [taxonomies]
