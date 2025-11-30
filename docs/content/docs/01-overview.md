@@ -64,6 +64,7 @@ AI時代に特化したエンジニア向け次世代シェル環境。GUIの視
 | **Claude Code連携** | ワンキーでClaude Codeに指示送信 |
 | **AIツール統合** | Cursor、Cline等の外部AIツールとの連携 |
 | **AIオーケストレーション** | 内蔵AIが状況判断し最適なツールを自動起動 |
+| **Git Auto Commit** | AIが変更を解析しコミットメッセージを自動生成 |
 
 ### 1-3-4. API Client機能 (Postman風)
 

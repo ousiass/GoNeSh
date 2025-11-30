@@ -15,6 +15,7 @@ weight: 6
 | `~/.gonesh/api-envs.yaml` | API環境変数 |
 | `~/.gonesh/api-collections.yaml` | APIリクエストコレクション |
 | `~/.gonesh/ai-tools.yaml` | 外部AIツール設定 |
+| `~/.gonesh/git.yaml` | Git Auto Commit設定 |
 | `~/.gonesh/history` | コマンド履歴 |
 | `~/.gonesh/api-history.json` | APIリクエスト履歴 |
 
@@ -253,4 +254,52 @@ ai_orchestration:
     ui: "Cursor"                # UI修正 → Cursor
     explain: "internal"         # 説明 → 内蔵AIで処理
     review: "internal"          # レビュー → 内蔵AIで処理
+```
+
+---
+
+## 5-9. Git Auto Commit設定
+
+```yaml
+# ~/.gonesh/git.yaml
+
+auto_commit:
+  enabled: true
+  model: "gemini-1.5-flash"    # 高速モデルを使用
+  language: "ja"               # メッセージの言語 (ja/en)
+  emoji: true                  # 絵文字を付ける
+  candidates: 5                # 生成する候補数
+  max_diff_lines: 500          # 解析する最大行数
+  auto_stage: false            # 自動ステージング
+
+  # コミットメッセージのフォーマット
+  format: "<type>: <description> <emoji>"
+
+  # カスタム絵文字マッピング
+  emoji_map:
+    feat: "✨"
+    fix: "🐛"
+    update: "📝"
+    refactor: "♻️"
+    style: "💄"
+    test: "✅"
+    docs: "📚"
+    chore: "📦"
+    perf: "⚡"
+    security: "🔒"
+    wip: "🚧"
+    hotfix: "🚑"
+
+  # 除外パターン（これらのファイルは解析しない）
+  exclude:
+    - "*.lock"
+    - "node_modules/*"
+    - "vendor/*"
+    - ".env*"
+
+  # コミット前フック
+  hooks:
+    pre_commit:
+      - "go fmt ./..."
+      - "go vet ./..."
 ```

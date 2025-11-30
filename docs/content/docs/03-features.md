@@ -58,6 +58,7 @@ weight: 4
 | API Client | `g + r` | **r**equest |
 | Claude Code送信 | `g + c` | **c**laude |
 | 外部AIツール選択 | `g + x` | e**x**ternal |
+| Git Auto Commit | `g + g` | **g**it |
 | 履歴検索 | `Ctrl + R` | (標準) |
 
 ### 3-2-2. プリセット選択UI
@@ -252,7 +253,111 @@ default: "Claude Code"
 
 ---
 
-## 3-5. コマンド履歴
+## 3-5. Git連携機能
+
+### 3-5-1. Git Auto Commit
+
+AIが変更内容を解析し、コミットメッセージを自動生成。
+
+```bash
+# ショートカットで実行
+g + g  # → git diffを解析してコミットメッセージ生成
+
+# コマンドで実行
+gcommit                      # ステージング済みの変更をコミット
+gcommit -a                   # 全変更をステージング＆コミット
+gcommit --dry-run            # メッセージのみ生成（コミットしない）
+
+# ディレクトリ・ファイル指定
+gcommit src/auth/            # 特定ディレクトリのみ
+gcommit src/auth/login.go    # 特定ファイルのみ
+gcommit src/auth/ src/api/   # 複数指定
+gcommit --exclude="*.test.go" # パターン除外
+```
+
+**生成されるメッセージ形式:**
+
+```
+<type>: <description> <emoji>
+
+例:
+feat: ユーザー認証機能を追加 ✨
+fix: ログイン時のNullPointerExceptionを修正 🐛
+update: READMEにインストール手順を追記 📝
+refactor: 認証ロジックをAuthServiceに分離 ♻️
+style: コードフォーマットを統一 💄
+test: ユーザーAPIのユニットテストを追加 ✅
+chore: 依存関係を更新 📦
+```
+
+**コミットタイプと絵文字:**
+
+| タイプ | 説明 | 絵文字 |
+|--------|------|--------|
+| feat | 新機能 | ✨ |
+| fix | バグ修正 | 🐛 |
+| update | 機能改善・更新 | 📝 |
+| refactor | リファクタリング | ♻️ |
+| style | フォーマット・スタイル | 💄 |
+| test | テスト追加・修正 | ✅ |
+| docs | ドキュメント | 📚 |
+| chore | ビルド・設定変更 | 📦 |
+| perf | パフォーマンス改善 | ⚡ |
+| security | セキュリティ修正 | 🔒 |
+
+### 3-5-2. コミットフロー
+
+AIが5つの候補を生成し、選択する形式。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  user@local ~/projects $ gcommit src/auth/                      │
+│                                                                 │
+│  📊 変更を解析中...                                             │
+│                                                                 │
+│  ┌─ 変更サマリー ────────────────────────────────────────────┐ │
+│  │  modified:  src/auth/login.go (+45, -12)                  │ │
+│  │  modified:  src/auth/session.go (+23, -5)                 │ │
+│  │  new file:  src/auth/oauth.go (+120)                      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  💡 コミットメッセージ候補（5件）:                              │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │  ▶ 1. feat: OAuth認証機能を追加 ✨                        │ │
+│  │    2. feat: Google/GitHub OAuth対応を実装 ✨               │ │
+│  │    3. update: 認証システムにOAuthプロバイダーを追加 📝     │ │
+│  │    4. feat: ソーシャルログイン機能を実装 ✨                │ │
+│  │    5. update: 認証フローにOAuth2.0を統合 📝                │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  [1-5] 選択  [e] カスタム編集  [r] 再生成  [Esc] キャンセル     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 3-5-3. 設定
+
+```yaml
+# ~/.gonesh/git.yaml
+
+auto_commit:
+  enabled: true
+  model: "gemini-1.5-flash"    # 高速なモデルを使用
+  language: "ja"               # メッセージの言語
+  emoji: true                  # 絵文字を付ける
+  max_diff_lines: 500          # 解析する最大行数
+
+  # カスタム絵文字マッピング
+  emoji_map:
+    feat: "✨"
+    fix: "🐛"
+    update: "📝"
+    refactor: "♻️"
+    test: "✅"
+```
+
+---
+
+## 3-6. コマンド履歴
 
 - シェル終了後も履歴を永続保存。
 - ローカル・リモート共通で `~/.gonesh/history` に保存。
