@@ -76,6 +76,11 @@ func (t *TabBar) ActiveTab() Tab {
 	return t.tabs[t.activeTab]
 }
 
+// ActiveTabIndex returns the index of the active tab
+func (t *TabBar) ActiveTabIndex() int {
+	return t.activeTab
+}
+
 // Tabs returns all tabs
 func (t *TabBar) Tabs() []Tab {
 	return t.tabs

@@ -3,7 +3,6 @@ package core
 
 import (
 	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ousiass/GoNeSh/internal/ui/context"
@@ -21,9 +20,12 @@ type App struct {
 	height    int
 	tabBar    *organisms.TabBar
 	statusBar *organisms.StatusBar
-	welcome   *organisms.Welcome
 	helpModal *organisms.HelpModal
 	showHelp  bool
+
+	// Terminal sessions per tab
+	terminals    map[int]*organisms.Terminal
+	terminalIDCounter int
 }
 
 // NewApp creates a new application instance
@@ -40,25 +42,37 @@ func NewApp(cfg *config.Config) *App {
 	h.Styles.FullDesc = lipgloss.NewStyle().Foreground(ui.Theme.Text)
 	h.Styles.FullSeparator = lipgloss.NewStyle().Foreground(ui.Theme.BorderAlt)
 
-	return &App{
+	app := &App{
 		config:    cfg,
 		ui:        ui,
 		keys:      DefaultKeyMap(),
 		help:      h,
 		tabBar:    organisms.NewTabBar(ui),
 		statusBar: organisms.NewStatusBar(ui),
-		welcome:   organisms.NewWelcome(ui),
 		helpModal: organisms.NewHelpModal(ui),
+		terminals: make(map[int]*organisms.Terminal),
+		terminalIDCounter: 0,
 	}
+
+	// Create initial terminal for the first tab
+	app.terminals[0] = organisms.NewTerminal(ui, 0)
+
+	return app
 }
 
 // Init initializes the application
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		a.statusBar.Init(),
-		a.welcome.Init(),
 		tea.SetWindowTitle("GoNeSh"),
-	)
+	}
+
+	// Initialize the first terminal
+	if term, ok := a.terminals[0]; ok {
+		cmds = append(cmds, term.Init())
+	}
+
+	return tea.Batch(cmds...)
 }
 
 // Update handles messages and updates the application state
@@ -73,10 +87,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			key := msg.String()
 			switch key {
 			case "t":
-				a.tabBar.AddTab("new", "local")
-				return a, nil
+				cmd := a.addNewTab()
+				return a, cmd
 			case "w":
-				if a.tabBar.CloseTab() {
+				if a.closeCurrentTab() {
 					return a, tea.Quit
 				}
 				return a, nil
@@ -95,23 +109,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		// 通常時
+		// 通常時 - Alt キーのショートカット
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
+			a.closeAllTerminals()
 			return a, tea.Quit
 		case "?":
 			a.showHelp = true
 			return a, nil
 		case "alt+t":
-			a.tabBar.AddTab("new", "local")
+			cmd := a.addNewTab()
+			return a, cmd
 		case "alt+w":
-			if a.tabBar.CloseTab() {
+			if a.closeCurrentTab() {
 				return a, tea.Quit
 			}
+			return a, nil
 		case "alt+]":
 			a.tabBar.NextTab()
+			return a, nil
 		case "alt+[":
 			a.tabBar.PrevTab()
+			return a, nil
 		case "alt+a": // AIパネル
 		case "alt+p": // プリセット
 		case "alt+c": // Claude
@@ -120,6 +139,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+s": // 転送
 		case "alt+r": // API
 		case "alt+g": // Git
+		default:
+			// Forward key to active terminal
+			if term := a.activeTerminal(); term != nil {
+				var cmd tea.Cmd
+				term, cmd = term.Update(msg)
+				a.terminals[a.tabBar.ActiveTabIndex()] = term
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -130,10 +157,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.statusBar.SetWidth(msg.Width)
 		a.help.Width = msg.Width
 
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		a.welcome, cmd = a.welcome.Update(msg)
-		cmds = append(cmds, cmd)
+		// Update terminal sizes
+		contentHeight := a.calculateContentHeight()
+		for _, term := range a.terminals {
+			term.SetSize(msg.Width, contentHeight)
+		}
+
+	default:
+		// Forward other messages to active terminal
+		if term := a.activeTerminal(); term != nil {
+			var cmd tea.Cmd
+			term, cmd = term.Update(msg)
+			a.terminals[a.tabBar.ActiveTabIndex()] = term
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	// ステータスバーを更新
@@ -165,13 +202,15 @@ func (a *App) View() string {
 	}
 
 	// コンテンツ
-	a.welcome.SetSize(a.width, contentHeight)
-	content := a.welcome.View()
-
-	// ヘルプモーダル
+	var content string
 	if a.showHelp {
 		a.helpModal.SetSize(a.width, contentHeight)
 		content = a.helpModal.View()
+	} else if term := a.activeTerminal(); term != nil {
+		term.SetSize(a.width, contentHeight)
+		content = term.View()
+	} else {
+		content = ""
 	}
 
 	// 全体を結合
@@ -192,4 +231,69 @@ func (a *App) View() string {
 		contentStyled,
 		statusBar,
 	)
+}
+
+// activeTerminal returns the terminal for the active tab
+func (a *App) activeTerminal() *organisms.Terminal {
+	return a.terminals[a.tabBar.ActiveTabIndex()]
+}
+
+// addNewTab adds a new tab with a terminal
+func (a *App) addNewTab() tea.Cmd {
+	a.terminalIDCounter++
+	id := a.terminalIDCounter
+
+	a.tabBar.AddTab("new", "local")
+	term := organisms.NewTerminal(a.ui, id)
+	a.terminals[a.tabBar.ActiveTabIndex()] = term
+
+	// Set size if known
+	if a.width > 0 && a.height > 0 {
+		contentHeight := a.calculateContentHeight()
+		term.SetSize(a.width, contentHeight)
+	}
+
+	return term.Init()
+}
+
+// closeCurrentTab closes the current tab and its terminal
+func (a *App) closeCurrentTab() bool {
+	idx := a.tabBar.ActiveTabIndex()
+	if term, ok := a.terminals[idx]; ok {
+		_ = term.Close()
+		delete(a.terminals, idx)
+	}
+
+	if a.tabBar.CloseTab() {
+		return true // Should quit
+	}
+
+	// Re-index terminals after closing
+	a.reindexTerminals()
+	return false
+}
+
+// closeAllTerminals closes all terminal sessions
+func (a *App) closeAllTerminals() {
+	for _, term := range a.terminals {
+		_ = term.Close()
+	}
+}
+
+// reindexTerminals updates terminal indices after tab changes
+func (a *App) reindexTerminals() {
+	// This is a simplified approach - in production,
+	// we'd need more sophisticated tab/terminal management
+}
+
+// calculateContentHeight calculates the content area height
+func (a *App) calculateContentHeight() int {
+	tabBarHeight := 1 // Approximate
+	statusBarHeight := 1 // Approximate
+
+	contentHeight := a.height - tabBarHeight - statusBarHeight
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	return contentHeight
 }
