@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -31,6 +33,8 @@ func New() (*PTY, error) {
 func NewWithCommand(command string, args ...string) (*PTY, error) {
 	cmd := exec.Command(command, args...)
 	cmd.Env = os.Environ()
+	// Create a new process group so we can kill all child processes
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Start the command with a PTY
 	ptmx, err := pty.Start(cmd)
@@ -91,20 +95,38 @@ func (p *PTY) Resize(rows, cols uint16) error {
 // Close closes the PTY session
 func (p *PTY) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.closed {
+		p.mu.Unlock()
 		return nil
 	}
 	p.closed = true
+	p.mu.Unlock()
 
-	// Close PTY
-	if err := p.pty.Close(); err != nil {
-		return err
+	// Close PTY first to stop any blocking reads
+	_ = p.pty.Close()
+
+	// Send SIGTERM to the process group
+	if p.cmd.Process != nil {
+		// Kill the process group (negative PID)
+		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
+
+		// Wait with timeout
+		done := make(chan error, 1)
+		go func() {
+			done <- p.cmd.Wait()
+		}()
+
+		select {
+		case <-done:
+			// Process exited normally
+		case <-time.After(100 * time.Millisecond):
+			// Timeout - force kill
+			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+			<-done
+		}
 	}
 
-	// Wait for the command to finish
-	return p.cmd.Wait()
+	return nil
 }
 
 // File returns the underlying PTY file descriptor
