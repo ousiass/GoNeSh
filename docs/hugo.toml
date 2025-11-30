@@ -1,0 +1,44 @@
+baseURL = "/"
+languageCode = "ja"
+title = "AI-Liver"
+
+# Hextra テーマの設定
+[module]
+  [[module.imports]]
+    path = "github.com/imfing/hextra"
+
+[params]
+  description = "TikTok Live配信中のコメントをリアルタイムで取得し、VTuberキャラクター（VRMモデル）がAI応答を生成して音声で読み上げるブラウザベースのライブ配信アプリケーション"
+
+  [params.navbar]
+    displayTitle = true
+    displayLogo = false
+
+  [params.footer]
+    displayCopyright = true
+    displayPoweredBy = false
+
+  [params.theme]
+    default = "system"
+    displayToggle = true
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    noClasses = false
+
+[menu]
+  [[menu.main]]
+    name = "ドキュメント"
+    pageRef = "/docs"
+    weight = 1
+
+  [[menu.main]]
+    name = "GitHub"
+    url = "https://github.com/ousiassllc/ai-liver"
+    weight = 2
+
+[taxonomies]
+  tag = "tags"
