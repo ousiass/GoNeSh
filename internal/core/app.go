@@ -3,12 +3,21 @@ package core
 
 import (
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ousiass/GoNeSh/internal/history"
 	"github.com/ousiass/GoNeSh/internal/ui/context"
 	"github.com/ousiass/GoNeSh/internal/ui/organisms"
 	"github.com/ousiass/GoNeSh/pkg/config"
+)
+
+// AppState represents the current state of the application
+type AppState int
+
+const (
+	StateWelcome AppState = iota
+	StateTerminal
 )
 
 // App represents the main application state
@@ -22,7 +31,9 @@ type App struct {
 	tabBar    *organisms.TabBar
 	statusBar *organisms.StatusBar
 	helpModal *organisms.HelpModal
+	welcome   *organisms.Welcome
 	showHelp  bool
+	state     AppState
 
 	// Terminal sessions per tab
 	terminals         map[int]*organisms.Terminal
@@ -59,13 +70,15 @@ func NewApp(cfg *config.Config) *App {
 		tabBar:            organisms.NewTabBar(ui),
 		statusBar:         organisms.NewStatusBar(ui),
 		helpModal:         organisms.NewHelpModal(ui),
+		welcome:           organisms.NewWelcome(ui),
 		terminals:         make(map[int]*organisms.Terminal),
 		terminalIDCounter: 0,
 		history:           hist,
 		historySearch:     organisms.NewHistorySearch(ui, hist),
+		state:             StateWelcome,
 	}
 
-	// Create initial terminal for the first tab
+	// Create initial terminal for the first tab (but don't start it yet)
 	app.terminals[0] = organisms.NewTerminal(ui, 0)
 
 	return app
@@ -75,12 +88,8 @@ func NewApp(cfg *config.Config) *App {
 func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		a.statusBar.Init(),
+		a.welcome.Init(),
 		tea.SetWindowTitle("GoNeSh"),
-	}
-
-	// Initialize the first terminal
-	if term, ok := a.terminals[0]; ok {
-		cmds = append(cmds, term.Init())
 	}
 
 	return tea.Batch(cmds...)
@@ -89,6 +98,37 @@ func (a *App) Init() tea.Cmd {
 // Update handles messages and updates the application state
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// Handle welcome state
+	if a.state == StateWelcome {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			// Any key press transitions to terminal
+			a.state = StateTerminal
+			// Initialize the terminal
+			if term, ok := a.terminals[0]; ok {
+				return a, term.Init()
+			}
+			return a, nil
+		case tea.WindowSizeMsg:
+			a.width = msg.Width
+			a.height = msg.Height
+			a.ui.SetSize(msg.Width, msg.Height)
+			a.tabBar.SetWidth(msg.Width)
+			a.statusBar.SetWidth(msg.Width)
+		case spinner.TickMsg:
+			var cmd tea.Cmd
+			a.welcome, cmd = a.welcome.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+
+		// Update status bar
+		var cmd tea.Cmd
+		a.statusBar, cmd = a.statusBar.Update(msg)
+		cmds = append(cmds, cmd)
+
+		return a, tea.Batch(cmds...)
+	}
 
 	// Handle history search result
 	if result, ok := msg.(organisms.HistorySearchResult); ok {
@@ -243,7 +283,10 @@ func (a *App) View() string {
 
 	// コンテンツ
 	var content string
-	if a.historySearch.IsVisible() {
+	if a.state == StateWelcome {
+		a.welcome.SetSize(a.width, contentHeight)
+		content = a.welcome.View()
+	} else if a.historySearch.IsVisible() {
 		// Show history search overlay on top of terminal
 		if term := a.activeTerminal(); term != nil {
 			term.SetSize(a.width, contentHeight)
