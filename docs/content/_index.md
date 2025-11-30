@@ -9,4 +9,3 @@ layout: "hextra-home"
 </script>
 
 <p>ドキュメントページへ移動しています... <a href="/docs/">こちらをクリック</a></p>
-git
