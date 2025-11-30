@@ -302,3 +302,16 @@ func (t *Terminal) IsRunning() bool {
 	defer t.mu.Unlock()
 	return t.running
 }
+
+// SendInput sends a string to the terminal input
+func (t *Terminal) SendInput(input string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if !t.running || t.pty == nil {
+		return
+	}
+
+	// Write the input to the PTY
+	_, _ = t.pty.Write([]byte(input))
+}
