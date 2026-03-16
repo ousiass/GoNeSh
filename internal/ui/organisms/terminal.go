@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ousiass/GoNeSh/internal/clipboard"
 	"github.com/ousiass/GoNeSh/internal/terminal"
 	"github.com/ousiass/GoNeSh/internal/ui/context"
 )
@@ -40,13 +41,19 @@ type Terminal struct {
 	height int
 
 	// Output buffer
-	lines      []string
-	scrollPos  int
-	mu         sync.Mutex
+	lines     []string
+	scrollPos int
+	mu        sync.Mutex
 
 	// State
 	running bool
 	err     error
+
+	// Selection mode
+	selectMode   bool
+	selectStart  int // Start line of selection
+	selectEnd    int // End line of selection
+	selectCursor int // Current cursor position in selection mode
 }
 
 // NewTerminal creates a new terminal component
@@ -175,6 +182,28 @@ func (t *Terminal) handleKeyInput(msg tea.KeyMsg) (*Terminal, tea.Cmd) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// Handle selection mode keys
+	if t.selectMode {
+		return t.handleSelectionKey(msg)
+	}
+
+	// Check for clipboard shortcuts
+	keyStr := msg.String()
+	switch keyStr {
+	case "ctrl+shift+v", "shift+insert":
+		// Paste from clipboard
+		if text, err := clipboard.Paste(); err == nil && text != "" {
+			if t.running && t.pty != nil {
+				_, _ = t.pty.Write([]byte(text))
+			}
+		}
+		return t, nil
+	case "ctrl+shift+c":
+		// Enter selection mode for copying
+		t.enterSelectionMode()
+		return t, nil
+	}
+
 	if !t.running || t.pty == nil {
 		return t, nil
 	}
@@ -224,6 +253,134 @@ func (t *Terminal) handleKeyInput(msg tea.KeyMsg) (*Terminal, tea.Cmd) {
 	return t, nil
 }
 
+// enterSelectionMode starts selection mode for copying text
+func (t *Terminal) enterSelectionMode() {
+	t.selectMode = true
+	// Start selection at current visible area
+	visibleStart := 0
+	if len(t.lines) > t.height {
+		visibleStart = len(t.lines) - t.height
+	}
+	t.selectCursor = visibleStart
+	t.selectStart = t.selectCursor
+	t.selectEnd = t.selectCursor
+}
+
+// handleSelectionKey handles keys in selection mode
+func (t *Terminal) handleSelectionKey(msg tea.KeyMsg) (*Terminal, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEscape:
+		// Exit selection mode
+		t.selectMode = false
+		return t, nil
+	case tea.KeyEnter:
+		// Copy selection and exit
+		t.copySelection()
+		t.selectMode = false
+		return t, nil
+	case tea.KeyUp:
+		// Move cursor up
+		if t.selectCursor > 0 {
+			t.selectCursor--
+			t.updateSelection()
+		}
+		return t, nil
+	case tea.KeyDown:
+		// Move cursor down
+		if t.selectCursor < len(t.lines)-1 {
+			t.selectCursor++
+			t.updateSelection()
+		}
+		return t, nil
+	case tea.KeyPgUp:
+		// Page up
+		t.selectCursor -= t.height
+		if t.selectCursor < 0 {
+			t.selectCursor = 0
+		}
+		t.updateSelection()
+		return t, nil
+	case tea.KeyPgDown:
+		// Page down
+		t.selectCursor += t.height
+		if t.selectCursor >= len(t.lines) {
+			t.selectCursor = len(t.lines) - 1
+		}
+		t.updateSelection()
+		return t, nil
+	case tea.KeyHome:
+		// Go to start
+		t.selectCursor = 0
+		t.updateSelection()
+		return t, nil
+	case tea.KeyEnd:
+		// Go to end
+		t.selectCursor = len(t.lines) - 1
+		t.updateSelection()
+		return t, nil
+	}
+
+	// Check for 'a' to select all, 'y' to copy (vim-style)
+	if msg.Type == tea.KeyRunes {
+		switch string(msg.Runes) {
+		case "a":
+			// Select all
+			t.selectStart = 0
+			t.selectEnd = len(t.lines) - 1
+			return t, nil
+		case "y", "c":
+			// Copy (vim/emacs style)
+			t.copySelection()
+			t.selectMode = false
+			return t, nil
+		}
+	}
+
+	return t, nil
+}
+
+// updateSelection updates the selection range based on cursor position
+func (t *Terminal) updateSelection() {
+	if t.selectCursor < t.selectStart {
+		t.selectEnd = t.selectStart
+		t.selectStart = t.selectCursor
+	} else {
+		t.selectEnd = t.selectCursor
+	}
+}
+
+// copySelection copies the selected text to clipboard
+func (t *Terminal) copySelection() {
+	if len(t.lines) == 0 {
+		return
+	}
+
+	start := t.selectStart
+	end := t.selectEnd
+	if start > end {
+		start, end = end, start
+	}
+
+	// Bounds check
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(t.lines) {
+		end = len(t.lines) - 1
+	}
+
+	// Build selected text
+	var sb strings.Builder
+	for i := start; i <= end; i++ {
+		sb.WriteString(t.lines[i])
+		if i < end {
+			sb.WriteString("\n")
+		}
+	}
+
+	_ = clipboard.Copy(sb.String())
+}
+
 // waitForOutput returns a command that waits briefly for more output
 func (t *Terminal) waitForOutput() tea.Cmd {
 	return tea.Tick(10*time.Millisecond, func(time.Time) tea.Msg {
@@ -249,18 +406,50 @@ func (t *Terminal) View() string {
 	// Calculate visible lines
 	visibleLines := t.height
 	startLine := 0
-	if len(t.lines) > visibleLines {
+
+	// In selection mode, follow the cursor
+	if t.selectMode {
+		// Adjust view to show cursor
+		if t.selectCursor < startLine {
+			startLine = t.selectCursor
+		} else if t.selectCursor >= startLine+visibleLines {
+			startLine = t.selectCursor - visibleLines + 1
+		}
+	} else if len(t.lines) > visibleLines {
 		startLine = len(t.lines) - visibleLines
 	}
 
+	// Selection highlight style
+	selectStyle := lipgloss.NewStyle().
+		Background(t.ctx.Theme.Primary).
+		Foreground(t.ctx.Theme.Bg)
+
 	// Build output
 	var output strings.Builder
+
+	// Show selection mode indicator
+	if t.selectMode {
+		indicator := lipgloss.NewStyle().
+			Foreground(t.ctx.Theme.Primary).
+			Bold(true).
+			Render("-- SELECT MODE (↑↓ move, Enter/y copy, a all, Esc cancel) --")
+		output.WriteString(indicator)
+		output.WriteString("\n")
+		visibleLines--
+	}
+
 	for i := startLine; i < len(t.lines) && i < startLine+visibleLines; i++ {
 		line := t.lines[i]
 		// Truncate long lines
 		if len(line) > t.width {
 			line = line[:t.width]
 		}
+
+		// Highlight selected lines
+		if t.selectMode && i >= t.selectStart && i <= t.selectEnd {
+			line = selectStyle.Render(line)
+		}
+
 		output.WriteString(line)
 		if i < len(t.lines)-1 {
 			output.WriteString("\n")
@@ -314,4 +503,23 @@ func (t *Terminal) SendInput(input string) {
 
 	// Write the input to the PTY
 	_, _ = t.pty.Write([]byte(input))
+}
+
+// IsSelectMode returns whether the terminal is in selection mode
+func (t *Terminal) IsSelectMode() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.selectMode
+}
+
+// CopyAll copies all terminal content to clipboard
+func (t *Terminal) CopyAll() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(t.lines) == 0 {
+		return nil
+	}
+
+	return clipboard.Copy(strings.Join(t.lines, "\n"))
 }
